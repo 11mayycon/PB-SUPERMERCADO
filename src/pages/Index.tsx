@@ -1,8 +1,10 @@
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import { Sidebar } from "@/components/Layout/Sidebar";
 import { MetricCard } from "@/components/Dashboard/MetricCard";
 import { OrderCard } from "@/components/Orders/OrderCard";
 import { ConnectionStatus } from "@/components/iFood/ConnectionStatus";
+import { useIFoodOrders } from "@/hooks/useIFoodOrders";
+import { supabase } from "@/integrations/supabase/client";
 import { 
   ShoppingCart, 
   Package, 
@@ -18,28 +20,7 @@ import { Badge } from "@/components/ui/badge";
 import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
 
-type OrderStatus = "new" | "confirmed" | "preparing" | "ready" | "dispatched";
-
-interface OrderItem {
-  name: string;
-  quantity: number;
-  price: number;
-  weight?: string;
-}
-
-interface Order {
-  id: string;
-  customer: string;
-  status: OrderStatus;
-  items: OrderItem[];
-  total: number;
-  paymentMethod: string;
-  address: string;
-  time: string;
-  estimatedTime?: string;
-}
-
-const getStatusLabel = (status: OrderStatus): string => {
+const getStatusLabel = (status: string): string => {
   const statusMap = {
     new: "Novo",
     confirmed: "Confirmado", 
@@ -47,58 +28,43 @@ const getStatusLabel = (status: OrderStatus): string => {
     ready: "Pronto",
     dispatched: "Despachado"
   };
-  return statusMap[status];
+  return statusMap[status as keyof typeof statusMap] || status;
 };
-
-const mockOrders: Order[] = [
-  {
-    id: "IF240001",
-    customer: "Maria Silva",
-    status: "new" as const,
-    items: [
-      { name: "Arroz Tio João 5kg", quantity: 2, price: 15.90 },
-      { name: "Feijão Carioca", quantity: 1, price: 8.50 },
-      { name: "Banana Prata", quantity: 1, price: 4.20, weight: "1.2kg" }
-    ],
-    total: 44.50,
-    paymentMethod: "PIX",
-    address: "Rua das Flores, 123 - Centro",
-    time: "14:35",
-    estimatedTime: "45min"
-  },
-  {
-    id: "IF240002", 
-    customer: "João Santos",
-    status: "preparing" as const,
-    items: [
-      { name: "Leite Integral", quantity: 3, price: 4.50 },
-      { name: "Pão de Açúcar", quantity: 2, price: 6.80 },
-      { name: "Carne Moída", quantity: 1, price: 18.90, weight: "500g" }
-    ],
-    total: 43.60,
-    paymentMethod: "Cartão de Crédito",
-    address: "Av. Principal, 456 - Jardim",
-    time: "14:20",
-    estimatedTime: "25min"
-  }
-];
 
 const Index = () => {
   const [activeTab, setActiveTab] = useState("dashboard");
   const [isConnectedToIFood, setIsConnectedToIFood] = useState(false);
-  const [orders, setOrders] = useState(mockOrders);
+  const { orders, loading: ordersLoading, error: ordersError, updateOrderStatus } = useIFoodOrders();
 
-  const handleOrderStatusChange = (orderId: string, newStatus: string) => {
-    setOrders(prev => prev.map(order => 
-      order.id === orderId 
-        ? { ...order, status: newStatus as any }
-        : order
-    ));
+  const handleOrderStatusChange = async (orderId: string, newStatus: string) => {
+    const result = await updateOrderStatus(orderId, newStatus);
+    if (result.error) {
+      console.error('Failed to update order status:', result.error);
+    }
   };
 
   const handleIFoodConnect = () => {
     setIsConnectedToIFood(true);
   };
+
+  // Check iFood connection status on component mount
+  useEffect(() => {
+    const checkIFoodConnection = async () => {
+      const { data } = await supabase
+        .from('ifood_config')
+        .select('integration_status, expires_at')
+        .eq('active', true)
+        .single();
+
+      if (data?.integration_status === 'connected') {
+        const expiresAt = new Date(data.expires_at);
+        const now = new Date();
+        setIsConnectedToIFood(expiresAt > now);
+      }
+    };
+
+    checkIFoodConnection();
+  }, []);
 
   const renderDashboard = () => (
     <div className="space-y-6">
@@ -148,20 +114,28 @@ const Index = () => {
           </CardHeader>
           <CardContent>
             <div className="space-y-4">
-              {orders.slice(0, 3).map(order => (
-                <div key={order.id} className="flex justify-between items-center p-3 bg-background/50 rounded-lg">
-                  <div>
-                    <p className="font-medium">#{order.id}</p>
-                    <p className="text-sm text-muted-foreground">{order.customer}</p>
+              {ordersLoading ? (
+                <p className="text-muted-foreground text-center">Carregando pedidos...</p>
+              ) : ordersError ? (
+                <p className="text-destructive text-center">{ordersError}</p>
+              ) : orders.length === 0 ? (
+                <p className="text-muted-foreground text-center">Nenhum pedido encontrado.</p>
+              ) : (
+                orders.slice(0, 3).map(order => (
+                  <div key={order.id} className="flex justify-between items-center p-3 bg-background/50 rounded-lg">
+                    <div>
+                      <p className="font-medium">#{order.id}</p>
+                      <p className="text-sm text-muted-foreground">{order.customer}</p>
+                    </div>
+                    <div className="text-right">
+                      <p className="font-medium">R$ {order.total.toFixed(2)}</p>
+                      <Badge variant="outline" className="text-xs">
+                        {getStatusLabel(order.status)}
+                      </Badge>
+                    </div>
                   </div>
-                  <div className="text-right">
-                    <p className="font-medium">R$ {order.total.toFixed(2)}</p>
-                    <Badge variant="outline" className="text-xs">
-                      {getStatusLabel(order.status)}
-                    </Badge>
-                  </div>
-                </div>
-              ))}
+                ))
+              )}
             </div>
           </CardContent>
         </Card>
@@ -211,15 +185,34 @@ const Index = () => {
         </div>
       </div>
 
-      <div className="grid grid-cols-1 lg:grid-cols-2 xl:grid-cols-3 gap-6">
-        {orders.map(order => (
-          <OrderCard 
-            key={order.id} 
-            order={order} 
-            onStatusChange={handleOrderStatusChange}
-          />
-        ))}
-      </div>
+      {ordersLoading ? (
+        <div className="text-center py-8">
+          <p className="text-muted-foreground">Carregando pedidos...</p>
+        </div>
+      ) : ordersError ? (
+        <div className="text-center py-8">
+          <p className="text-destructive">{ordersError}</p>
+        </div>
+      ) : orders.length === 0 ? (
+        <div className="text-center py-8">
+          <p className="text-muted-foreground">Nenhum pedido encontrado.</p>
+          {!isConnectedToIFood && (
+            <p className="text-sm text-muted-foreground mt-2">
+              Conecte-se ao iFood para ver os pedidos.
+            </p>
+          )}
+        </div>
+      ) : (
+        <div className="grid grid-cols-1 lg:grid-cols-2 xl:grid-cols-3 gap-6">
+          {orders.map(order => (
+            <OrderCard 
+              key={order.id} 
+              order={order} 
+              onStatusChange={handleOrderStatusChange}
+            />
+          ))}
+        </div>
+      )}
     </div>
   );
 

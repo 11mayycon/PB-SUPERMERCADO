@@ -6,6 +6,7 @@ import { Label } from "@/components/ui/label";
 import { Smartphone, CheckCircle, AlertCircle, Copy, ExternalLink } from "lucide-react";
 import { useState } from "react";
 import { useToast } from "@/hooks/use-toast";
+import { supabase } from "@/integrations/supabase/client";
 
 interface ConnectionStatusProps {
   isConnected: boolean;
@@ -16,22 +17,41 @@ export function ConnectionStatus({ isConnected, onConnect }: ConnectionStatusPro
   const [authCode, setAuthCode] = useState("");
   const [userCode, setUserCode] = useState("");
   const [verificationUrl, setVerificationUrl] = useState("");
+  const [authorizationCodeVerifier, setAuthorizationCodeVerifier] = useState("");
   const [step, setStep] = useState<"initial" | "waiting" | "code-entry">("initial");
+  const [loading, setLoading] = useState(false);
   const { toast } = useToast();
 
-  const generateUserCode = () => {
-    // Simular geração do userCode
-    const mockUserCode = "PBSUP-" + Math.random().toString(36).substring(2, 8).toUpperCase();
-    const mockVerificationUrl = `https://partner-portal.ifood.com.br/auth/device?code=${mockUserCode}`;
-    
-    setUserCode(mockUserCode);
-    setVerificationUrl(mockVerificationUrl);
-    setStep("waiting");
-    
-    toast({
-      title: "Código gerado!",
-      description: "Acesse o Portal do Parceiro iFood para autorizar o aplicativo.",
-    });
+  const generateUserCode = async () => {
+    setLoading(true);
+    try {
+      const { data, error } = await supabase.functions.invoke('ifood-auth', {
+        body: { action: 'generateUserCode' }
+      });
+
+      if (error) {
+        throw error;
+      }
+
+      setUserCode(data.userCode);
+      setVerificationUrl(data.verificationUrlComplete);
+      setAuthorizationCodeVerifier(data.authorizationCodeVerifier);
+      setStep("waiting");
+      
+      toast({
+        title: "Código gerado!",
+        description: "Acesse o Portal do Parceiro iFood para autorizar o aplicativo.",
+      });
+    } catch (error) {
+      console.error('Error generating user code:', error);
+      toast({
+        title: "Erro",
+        description: "Não foi possível gerar o código. Tente novamente.",
+        variant: "destructive"
+      });
+    } finally {
+      setLoading(false);
+    }
   };
 
   const copyToClipboard = (text: string) => {
@@ -42,14 +62,37 @@ export function ConnectionStatus({ isConnected, onConnect }: ConnectionStatusPro
     });
   };
 
-  const handleAuthSubmit = () => {
-    if (authCode.trim()) {
-      // Simular troca do código por token
+  const handleAuthSubmit = async () => {
+    if (!authCode.trim()) return;
+    
+    setLoading(true);
+    try {
+      const { error } = await supabase.functions.invoke('ifood-auth', {
+        body: { 
+          action: 'exchangeCode',
+          authorizationCode: authCode,
+          authorizationCodeVerifier
+        }
+      });
+
+      if (error) {
+        throw error;
+      }
+
       onConnect();
       toast({
         title: "Conectado com sucesso!",
         description: "Sua loja está agora integrada ao iFood.",
       });
+    } catch (error) {
+      console.error('Error exchanging code:', error);
+      toast({
+        title: "Erro na conexão",
+        description: "Código inválido ou expirado. Tente novamente.",
+        variant: "destructive"
+      });
+    } finally {
+      setLoading(false);
     }
   };
 
@@ -108,8 +151,8 @@ export function ConnectionStatus({ isConnected, onConnect }: ConnectionStatusPro
               </div>
             </div>
             
-            <Button onClick={generateUserCode} className="w-full">
-              Conectar ao iFood
+            <Button onClick={generateUserCode} className="w-full" disabled={loading}>
+              {loading ? "Gerando código..." : "Conectar ao iFood"}
             </Button>
           </div>
         )}
@@ -176,10 +219,10 @@ export function ConnectionStatus({ isConnected, onConnect }: ConnectionStatusPro
             <div className="flex gap-2">
               <Button 
                 onClick={handleAuthSubmit} 
-                disabled={!authCode.trim()}
+                disabled={!authCode.trim() || loading}
                 className="flex-1"
               >
-                Conectar
+                {loading ? "Conectando..." : "Conectar"}
               </Button>
               <Button 
                 variant="outline" 

@@ -1,1 +1,21 @@
 project_id = "usjfkgbdlwnhnofenkmj"
+
+[api]
+enabled = true
+port = 54321
+schemas = ["public", "graphql_public"]
+extra_search_path = ["public", "extensions"]
+max_rows = 1000
+
+[db]
+port = 54322
+
+[studio]
+enabled = true
+port = 54323
+
+[functions.ifood-auth]
+verify_jwt = false
+
+[functions.ifood-orders]
+verify_jwt = false
